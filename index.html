@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The Playables SDK MUST load before any game code (Integration req. 1). -->
+<script src="https://www.youtube.com/game_api/v1"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#5ec2ff">
+<title>Pip's Adventure</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦊</text></svg>">
+<link rel="stylesheet" href="css/font.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="game"></canvas>
+
+  <!-- ====================== HUD ====================== -->
+  <div id="hud" class="hidden">
+    <div class="hud-side">
+      <div id="hearts" class="hearts"></div>
+    </div>
+    <div class="hud-mid">
+      <div id="level-name" class="level-name">Level 1</div>
+    </div>
+    <div class="hud-side hud-right">
+      <div class="pill"><span class="pill-ico">⭐</span><span id="coin-count">0 / 0</span></div>
+      <button id="btn-menu" class="icon-btn" aria-label="Open menu">☰</button>
+    </div>
+  </div>
+
+  <!-- ============ ON-SCREEN CONTROLS (touch + mouse) ============ -->
+  <div id="touch">
+    <div class="touch-left">
+      <button class="tbtn" data-key="left" aria-label="Move left">◀</button>
+      <button class="tbtn" data-key="right" aria-label="Move right">▶</button>
+    </div>
+    <div class="touch-right">
+      <button class="tbtn tbtn-jump" data-key="jump" aria-label="Jump">▲</button>
+    </div>
+  </div>
+
+  <!-- ====================== TITLE ====================== -->
+  <section id="screen-title" class="screen">
+    <div class="sky-deco" aria-hidden="true">
+      <span class="float f1">🍀</span><span class="float f2">⭐</span><span class="float f3">🍎</span>
+      <span class="float f4">🦋</span><span class="float f5">⭐</span><span class="float f6">🌼</span>
+    </div>
+    <div class="panel panel-title">
+      <div class="hero-emoji">🦊</div>
+      <h1 class="game-title">Pip's<br><span>Adventure</span></h1>
+      <p class="subtitle">Collect the stars and reach the flag!</p>
+      <div class="btn-row">
+        <button class="btn btn-big btn-green" data-action="play">▶ Play</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-blue" data-action="levels">🗺️ Levels</button>
+        <button class="btn btn-purple" data-action="help">❓ How to play</button>
+      </div>
+      <div class="toggles">
+        <button class="chip" id="t-sfx">🔊 Sounds</button>
+        <button class="chip" id="t-music">🎵 Music</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== HELP ====================== -->
+  <section id="screen-help" class="screen hidden">
+    <div class="panel">
+      <h2 class="panel-title-text">How to play</h2>
+      <ul class="help-list">
+        <li>Tap or click <b class="keycap">◀</b> <b class="keycap">▶</b> <b class="keycap">▲</b> on screen to walk and jump</li>
+        <li>Or use <b class="keycap">←</b> <b class="keycap">→</b> to walk and <b class="keycap">Space</b> to jump</li>
+        <li>Hold the jump button to jump higher</li>
+        <li>🦊 Land <b>on top of</b> the bugs to pop them!</li>
+        <li>⭐ Collect every star to earn all <b>3 stars</b></li>
+        <li>🔑 The key opens a locked flag</li>
+        <li>❤️ You have 3 hearts. Spikes and water hurt!</li>
+      </ul>
+      <div class="btn-row"><button class="btn btn-green" data-action="back-title">Got it!</button></div>
+    </div>
+  </section>
+
+  <!-- ====================== LEVEL MAP ====================== -->
+  <section id="screen-levels" class="screen hidden">
+    <div class="panel panel-wide">
+      <h2 class="panel-title-text">Pick a level</h2>
+      <div id="level-grid" class="level-grid"></div>
+      <div class="total-stars">Total: <span id="total-stars">0</span> / <span id="max-stars">30</span> ⭐</div>
+      <div class="btn-row">
+        <button class="btn btn-blue" data-action="back-title">⟵ Back</button>
+        <button class="btn btn-ghost" data-action="reset">🗑️ Erase progress</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== CONFIRM ====================== -->
+  <section id="screen-confirm" class="screen hidden">
+    <div class="panel">
+      <div class="win-emoji">🗑️</div>
+      <h2 class="panel-title-text">Erase all progress?</h2>
+      <p class="subtitle">Every unlocked level and star will be lost.</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost" data-action="confirm-no">Keep it</button>
+        <button class="btn btn-red" data-action="confirm-yes">Yes, erase</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== PAUSE / MENU ====================== -->
+  <section id="screen-pause" class="screen hidden">
+    <div class="panel">
+      <h2 class="panel-title-text">Paused</h2>
+      <div class="btn-row"><button class="btn btn-big btn-green" data-action="resume">▶ Resume</button></div>
+      <div class="btn-row">
+        <button class="btn btn-blue" data-action="restart">↻ Start over</button>
+        <button class="btn btn-purple" data-action="levels">🗺️ Levels</button>
+      </div>
+      <div class="toggles">
+        <button class="chip" id="t-sfx2">🔊 Sounds</button>
+        <button class="chip" id="t-music2">🎵 Music</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== LEVEL COMPLETE ====================== -->
+  <section id="screen-complete" class="screen hidden">
+    <div class="panel panel-win">
+      <div class="win-emoji">🎉</div>
+      <h2 class="panel-title-text">Nice one!</h2>
+      <div id="stars-earned" class="stars-earned"><span>☆</span><span>☆</span><span>☆</span></div>
+      <p id="complete-info" class="subtitle">You collected 0 of 0 stars</p>
+      <div class="btn-row"><button class="btn btn-big btn-green" data-action="next">Next level ⟶</button></div>
+      <div class="btn-row">
+        <button class="btn btn-blue" data-action="restart">↻ Play again</button>
+        <button class="btn btn-purple" data-action="levels">🗺️ Levels</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== GAME OVER ====================== -->
+  <section id="screen-gameover" class="screen hidden">
+    <div class="panel">
+      <div class="win-emoji">😵</div>
+      <h2 class="panel-title-text">Oops, try again!</h2>
+      <p class="subtitle">No worries — everybody falls a few times.</p>
+      <div class="btn-row"><button class="btn btn-big btn-green" data-action="restart">↻ One more go</button></div>
+      <div class="btn-row"><button class="btn btn-purple" data-action="levels">🗺️ Levels</button></div>
+    </div>
+  </section>
+
+  <!-- ====================== FINAL VICTORY ====================== -->
+  <section id="screen-victory" class="screen hidden">
+    <div class="panel panel-win">
+      <div class="win-emoji">🏆</div>
+      <h2 class="panel-title-text">You finished the game!</h2>
+      <p class="subtitle">Pip made it all the way home. That is every level, every flag — there is no more game left to play. You're a champion!</p>
+      <p id="victory-stars" class="big-score">⭐ 0 / 30</p>
+      <div class="btn-row"><button class="btn btn-big btn-green" data-action="levels">🗺️ Level map</button></div>
+      <div class="btn-row"><button class="btn btn-blue" data-action="back-title">🏠 Menu</button></div>
+    </div>
+  </section>
+</div>
+
+<script src="js/audio.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
