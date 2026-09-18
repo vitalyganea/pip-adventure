@@ -119,19 +119,27 @@ body{
 .icon-btn:active{ transform:translateY(2px); box-shadow:0 1px 0 rgba(0,0,0,.18); }
 
 /* ------------------- SCREENS ------------------- */
+/* Menus cover the whole window, not just the letterboxed stage: on a phone in
+   portrait the stage is far too short to hold a panel, and #stage clips. */
 .screen{
-  position:absolute; inset:0;
-  display:flex; align-items:center; justify-content:center;
-  padding:18px;
+  position:fixed; inset:0;
+  display:flex; align-items:flex-start; justify-content:center;
+  padding:calc(18px + env(safe-area-inset-top,0px))
+          calc(18px + env(safe-area-inset-right,0px))
+          calc(18px + env(safe-area-inset-bottom,0px))
+          calc(18px + env(safe-area-inset-left,0px));
   background:radial-gradient(circle at 50% 40%, rgba(30,18,64,.28), rgba(16,9,38,.62));
   backdrop-filter:blur(5px);
   animation:fade .25s ease both;
-  overflow:auto;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-y;              /* body sets touch-action:none for gameplay */
 }
 @keyframes fade{ from{ opacity:0 } to{ opacity:1 } }
 
 .panel{
   position:relative;
+  margin:auto;                     /* centres, yet never clips a tall panel */
   width:min(560px,100%);
   text-align:center;
   padding:26px 26px 22px;
@@ -321,3 +329,35 @@ body{
 }
 .tbtn:active,.tbtn.down{ background:rgba(255,255,255,.72); color:var(--ink); transform:scale(.94); }
 .tbtn-jump{ background:rgba(70,201,58,.55); }
+
+/* ------------------- SHORT SCREENS ------------------- */
+@media (max-height:640px){
+  .panel      { padding:18px 20px 16px; }
+  .btn-row    { margin-top:7px; gap:8px; }
+  .hero-emoji { font-size:clamp(34px,7vw,52px); }
+  .win-emoji  { font-size:clamp(32px,7vw,48px); }
+  .game-title { font-size:clamp(28px,6vw,46px); }
+  .subtitle   { margin:2px 0 8px; }
+  .toggles    { margin-top:10px; }
+  .help-list  { gap:6px; }
+  .help-list li { padding:6px 12px; }
+}
+@media (max-height:460px){
+  .hero-emoji, .win-emoji { display:none; }
+  .screen      { padding-top:calc(10px + env(safe-area-inset-top,0px));
+                 padding-bottom:calc(10px + env(safe-area-inset-bottom,0px)); }
+  .panel       { padding:14px 18px 12px; }
+  .game-title  { font-size:clamp(24px,5.2vw,34px); line-height:.92; }
+  .panel-title-text { font-size:clamp(19px,3.6vw,26px); margin-bottom:6px; }
+  .subtitle    { font-size:clamp(12px,1.9vw,14px); margin:2px 0 6px; }
+  .btn         { padding:9px 20px; font-size:clamp(14px,2vw,16px); }
+  .btn-big     { padding:11px 26px; font-size:clamp(15px,2.4vw,19px); }
+  .btn-row     { margin-top:6px; }
+  .toggles     { margin-top:8px; }
+  .chip        { padding:5px 13px; font-size:13px; }
+  .stars-earned{ font-size:clamp(28px,5vw,40px); }
+  .help-list   { gap:4px; font-size:clamp(12px,1.8vw,14px); }
+  .help-list li{ padding:5px 10px; }
+  .level-grid  { gap:7px; margin:4px 0 8px; }
+  .total-stars { font-size:14px; }
+}
