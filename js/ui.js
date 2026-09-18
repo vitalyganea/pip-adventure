@@ -266,38 +266,50 @@
   });
 
   /* ------------ on-screen controls (pointer = mouse + touch) -- */
+  /* Every control remembers which pointer is holding it. Without that, lifting
+     the finger that tapped Jump also released the arrow the other thumb was
+     still pressing, so the fox stopped dead in mid-air. */
+  var heldBy = {};                                   // pointerId -> button
+
   Array.prototype.forEach.call(touch.querySelectorAll('.tbtn'), function (b) {
     var key = b.getAttribute('data-key');
-    function press(e) {
+    b.addEventListener('pointerdown', function (e) {
       e.preventDefault();
-      if (e.pointerId != null && b.setPointerCapture) {
-        try { b.setPointerCapture(e.pointerId); } catch (err) {}
+      if (e.pointerId != null) {
+        heldBy[e.pointerId] = b;
+        if (b.setPointerCapture) { try { b.setPointerCapture(e.pointerId); } catch (err) {} }
       }
       b.classList.add('down');
       Sfx.unlock();
       Game.setKey(key, true);
-    }
-    function release(e) {
-      if (e && e.preventDefault) e.preventDefault();
-      b.classList.remove('down');
-      Game.setKey(key, false);
-    }
-    b.addEventListener('pointerdown', press);
-    b.addEventListener('pointerup', release);
-    b.addEventListener('pointercancel', release);
-    b.addEventListener('lostpointercapture', release);
+    });
     b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   });
-  // safety net: a pointer released anywhere clears every held control
-  window.addEventListener('pointerup', function () {
-    Array.prototype.forEach.call(touch.querySelectorAll('.tbtn.down'), function (b) {
+
+  /* One release path for every control: only the button this exact pointer was
+     holding is let go. Listening on window also covers a finger that slides off. */
+  function releasePointer(e) {
+    if (!e || e.pointerId == null) return;
+    var b = heldBy[e.pointerId];
+    if (!b) return;
+    delete heldBy[e.pointerId];
+    b.classList.remove('down');
+    Game.setKey(b.getAttribute('data-key'), false);
+  }
+  window.addEventListener('pointerup', releasePointer);
+  window.addEventListener('pointercancel', releasePointer);
+
+  function releaseAllControls() {
+    heldBy = {};
+    Array.prototype.forEach.call(touch.querySelectorAll('.tbtn'), function (b) {
       b.classList.remove('down');
       Game.setKey(b.getAttribute('data-key'), false);
     });
-  });
+  }
 
   /* ------------------ Playables lifecycle -------------------- */
   function platformPause() {
+    releaseAllControls();
     if (Game.isRunning() && !Game.isPaused()) {
       Game.pause();
       show('pause');
