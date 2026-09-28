@@ -77,6 +77,7 @@ var Sfx = (function () {
     win:   function(){ [523,659,784,1046,1318].forEach(function(f,i){
                          tone({ freq:f, dur:0.3, type:'triangle', vol:0.28, delay:i*0.1 }); }); },
     click: function(){ tone({ freq:700, to:1000, dur:0.06, type:'square', vol:0.16 }); },
+    crack: function(){ noise(0.16, 0.18, 1600); tone({ freq:220, to:150, dur:0.18, type:'square', vol:0.14 }); },
     locked:function(){ tone({ freq:180, dur:0.1, type:'square', vol:0.2 });
                        tone({ freq:140, dur:0.14, type:'square', vol:0.2, delay:0.1 }); }
   };

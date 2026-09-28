@@ -157,7 +157,8 @@
     current = idx;
     showGame();
     Sfx.unlock();
-    Game.start(idx, { hud: renderHud, complete: onComplete, gameover: onGameOver });
+    Game.start(idx, { hud: renderHud, complete: onComplete, gameover: onGameOver },
+               { glide: save.unlocked > 10 });   // the leaf carries back to chapter 1
   }
 
   function onComplete(res) {

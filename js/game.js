@@ -18,6 +18,9 @@ var Game = (function () {
   var FRIC_GND  = 0.80,  FRIC_AIR = 0.93;
   var JUMP_V    = 14.2,  SPRING_V = 21.0;
   var COYOTE    = 8,     BUFFER   = 9;
+  var GLIDE_FALL = 2.4;                  // terminal speed while gliding
+  var WIND_LIFT  = 0.95, WIND_MAX = 5.2; // updraft pull and top speed
+  var CRACK_TIME = 34,   GONE_TIME = 110;
   var HEARTS_MAX = 3;
 
   /* -------------------------- themes ------------------------- */
@@ -65,9 +68,14 @@ var Game = (function () {
   ];
 
   var HINTS = {
-    0: [ { x: 150,  y: 300, t: 'Use  ◀  ▶  to walk' },
-         { x: 500,  y: 250, t: 'Press  ▲  to jump' },
-         { x: 1420, y: 250, t: 'Jump on the bug!' } ]
+    0:  [ { x: 150,  y: 300, t: 'Use  ◀  ▶  to walk' },
+          { x: 500,  y: 250, t: 'Press  ▲  to jump' },
+          { x: 1420, y: 250, t: 'Jump on the bug!' } ],
+    10: [ { x: 230,  y: 300, t: 'Pip found a leaf!' },
+          { x: 700,  y: 200, t: 'HOLD  ▲  while falling to glide' } ],
+    11: [ { x: 300,  y: 280, t: 'Cracked planks fall — keep moving!' } ],
+    12: [ { x: 250,  y: 300, t: 'Hold  ▲  inside the wind to fly up' } ],
+    19: [ { x: 220,  y: 260, t: 'Land on her crown — three times!' } ]
   };
 
   /* -------------------------- state -------------------------- */
@@ -135,6 +143,7 @@ var Game = (function () {
       themeId: def.theme, g: g, cols: cols, rows: rows,
       pxW: cols * TILE, pxH: rows * TILE,
       coins: [], enemies: [], springs: [], movers: [], checkpoints: [],
+      crumbles: [], winds: [], boss: null, glide: false,
       planks: [], waters: [], keyItem: null, goal: null,
       particles: [], decor: [], clouds: [], hills: [], bgStars: [], flakes: [],
       total: 0, got: 0, hearts: HEARTS_MAX, hasKey: false, needKey: false,
@@ -178,6 +187,23 @@ var Game = (function () {
           case 'G':
             w.goal = { x: px + 2, y: py - TILE, w: 44, h: TILE * 2, cx: px + 12, by: py + TILE, t: 0 };
             g[y][x] = ' '; break;
+          case 'x':
+            w.crumbles.push({ x: px, y: py, w: TILE, h: 20, state: 0, t: 0, seed: (x * 7 + y * 3) % 10 });
+            g[y][x] = ' '; break;
+          case 'w': {
+            var top = y;
+            while (top > 0 && g[top - 1][x] !== '#') top--;
+            w.winds.push({ x: px, y: top * TILE, w: TILE, h: (y - top + 1) * TILE, ph: x * 0.7 });
+            g[y][x] = ' '; break;
+          }
+          case 'Q':
+            w.boss = {
+              x: px - 24, y: py - 40, w: 96, h: 66, ox: px - 24, oy: py - 40,
+              hp: 3, state: 'hover', t: 0, vy: 0, dir: 1, hurt: 0, dead: 0,
+              targetX: px, flash: 0
+            };
+            w.needKey = true;                 // the flag stays shut until she falls
+            g[y][x] = ' '; break;
           case 'M':
             w.movers.push({ type: 'h', ox: px, oy: py + TILE - 24, x: px, y: py + TILE - 24,
                             w: TILE * 3, h: 24, amp: TILE * 2, sp: 0.014, t: Math.PI, dx: 0, dy: 0 });
@@ -188,6 +214,14 @@ var Game = (function () {
             g[y][x] = ' '; break;
         }
       }
+    }
+
+    if (w.boss) {
+      var bcx = Math.floor((w.boss.x + w.boss.w / 2) / TILE), fy = rows;
+      for (var by = Math.floor(w.boss.y / TILE); by < rows; by++) {
+        if (g[by][bcx] === '#') { fy = by; break; }
+      }
+      w.boss.floorY = fy * TILE;
     }
 
     /* --- group platforms and water together so they draw cleanly --- */
@@ -304,6 +338,17 @@ var Game = (function () {
         if (dy < 0) { e.y = m.y + m.h; e.vy = 0; return true; }
       }
     }
+    if (dy > 0 && !e.noPlat) {
+      for (i = 0; i < W.crumbles.length; i++) {
+        var cr = W.crumbles[i];
+        if (cr.state === 2) continue;                  // already fallen away
+        if (overlap(e, cr) && prevB <= cr.y + 2) {
+          e.y = cr.y - e.h; e.vy = 0; e.onGround = true;
+          if (cr.state === 0 && e === W.p) { cr.state = 1; cr.t = 0; }
+          return true;
+        }
+      }
+    }
     return false;
   }
 
@@ -368,6 +413,65 @@ var Game = (function () {
     }
   }
 
+  /* ------------------------ the Queen ------------------------ */
+  function updateBoss() {
+    var b = W.boss, p = W.p;
+    if (b.flash > 0) b.flash--;
+    if (b.hurt > 0)  b.hurt--;
+    b.t++;
+
+    if (b.state === 'dying') {
+      b.dead++;
+      b.vy = Math.min(b.vy + 0.35, 9);
+      b.y += b.vy;
+      b.x += Math.sin(b.dead * 0.22) * 2.5;
+      if (b.dead % 6 === 0)
+        burst(b.x + b.w / 2 + (Math.random() - 0.5) * 70, b.y + 30, 5,
+              { c: '#ffd83d', spd: 3, r: 4, life: 30 });
+      if (b.dead === 60 && !W.hasKey) {
+        W.hasKey = true; W.flash = 14; Sfx.key(); confetti(); hud();
+      }
+      return;
+    }
+
+    switch (b.state) {
+      case 'hover':                         // sweeps overhead, out of reach
+        b.x = b.ox + Math.sin(b.t * 0.017) * 175;
+        b.y = b.oy + Math.sin(b.t * 0.05) * 12;
+        b.dir = Math.cos(b.t * 0.017) >= 0 ? 1 : -1;
+        if (b.t > 145) { b.state = 'aim'; b.t = 0; b.targetX = p.x + p.w / 2 - b.w / 2; }
+        break;
+      case 'aim':                           // trembles: the tell before a dive
+        b.y = b.oy + Math.sin(b.t * 0.65) * 3;
+        b.x += (b.targetX - b.x) * 0.06;
+        if (b.t > 45) { b.state = 'dive'; b.t = 0; b.vy = 0; }
+        break;
+      case 'dive':
+        b.vy = Math.min(b.vy + 0.62, 12);
+        b.y += b.vy;
+        b.x += (b.targetX - b.x) * 0.04;
+        if (b.y + b.h >= b.floorY) {
+          b.y = b.floorY - b.h; b.state = 'rise'; b.t = 0; b.vy = 0;
+          W.shake = 12; Sfx.land();
+          burst(b.x + b.w / 2, b.floorY, 16,
+                { c: 'rgba(255,255,255,.8)', spd: 3.6, r: 5, life: 26,
+                  ang: -Math.PI / 2, spread: 2.6 });
+        }
+        break;
+      case 'rise':                          // stays low a moment — your window
+        if (b.t < 42) break;
+        b.y -= 3.2;
+        if (b.y <= b.oy) { b.y = b.oy; b.state = 'hover'; b.t = 0; }
+        break;
+      case 'stunned':
+        b.vy = Math.min(b.vy + 0.4, 8);
+        b.y = Math.min(b.y + b.vy, b.floorY - b.h);
+        if (b.t > 95) { b.state = 'rise'; b.t = 42; }
+        break;
+    }
+    b.x = clamp(b.x, TILE, W.pxW - b.w - TILE);
+  }
+
   /* ======================== UPDATE STEP ======================= */
   function step() {
     var p = W.p, i;
@@ -386,6 +490,26 @@ var Game = (function () {
       m.dx = nx - m.x; m.dy = ny - m.y;
       m.x = nx; m.y = ny;
     }
+
+    /* ---- crumbling platforms ---- */
+    for (i = 0; i < W.crumbles.length; i++) {
+      var cb = W.crumbles[i];
+      if (cb.state === 1) {
+        cb.t++;
+        if (cb.t === 1) Sfx.crack();
+        if (cb.t >= CRACK_TIME) {
+          cb.state = 2; cb.t = 0;
+          burst(cb.x + TILE / 2, cb.y + 10, 9,
+                { c: W.theme.plank, spd: 2.2, r: 4, life: 34, g: 0.35 });
+        }
+      } else if (cb.state === 2) {
+        cb.t++;
+        if (cb.t >= GONE_TIME) { cb.state = 0; cb.t = 0; }
+      }
+    }
+
+    /* ---- the Queen ---- */
+    if (W.boss) updateBoss();
 
     /* ---- death: a short animation ---- */
     if (W.state === 'dead') {
@@ -443,6 +567,30 @@ var Game = (function () {
     if (p.canCut && !p.jumpHeld && p.vy < -8.2) p.vy = -8.2;
 
     p.vy = Math.min(p.vy + GRAVITY, MAX_FALL);
+
+    /* ---- the leaf: hold jump on the way down to drift ---- */
+    p.gliding = false;
+    if (W.glide && keys.jump && !p.onGround && p.vy > 0.4) {
+      p.gliding = true;
+      if (p.vy > GLIDE_FALL) p.vy = GLIDE_FALL;
+      if (W.timer % 9 === 0) {
+        burst(p.x + p.w / 2 - p.face * 14, p.y + 22, 1,
+              { c: 'rgba(255,255,255,.8)', spd: 0.6, r: 2.6, life: 26, g: 0.01 });
+      }
+    }
+
+    /* ---- updrafts: hold jump inside one and you rise ---- */
+    p.inWind = false;
+    for (var wi = 0; wi < W.winds.length; wi++) {
+      var wc = W.winds[wi];
+      if (p.x + p.w > wc.x + 4 && p.x < wc.x + wc.w - 4 &&
+          p.y + p.h > wc.y && p.y < wc.y + wc.h) {
+        p.inWind = true;
+        if (keys.jump) { p.vy = Math.max(p.vy - WIND_LIFT, -WIND_MAX); p.gliding = true; }
+        else if (p.vy > 3.2) p.vy = 3.2;
+        break;
+      }
+    }
 
     var wasGround = p.onGround;
     p.onGround = false;
@@ -547,6 +695,26 @@ var Game = (function () {
         } else if (p.invuln <= 0) {
           hurt(false);
         }
+      }
+    }
+
+    /* ---- the Queen: stomp her head, dodge everything else ---- */
+    if (W.boss && !W.boss.dead && W.state === 'play' && overlap(p, W.boss)) {
+      var bs = W.boss;
+      var onHead = p.vy > 1 && (p.y + p.h) < bs.y + bs.h * 0.55;
+      if (onHead && bs.hurt <= 0) {
+        bs.hp--; bs.hurt = 80; bs.flash = 16; bs.t = 0;
+        p.vy = -11.5; p.jumpHeld = true; p.canCut = false; p.sq = 0.7;
+        W.shake = 15; Sfx.stomp();
+        burst(bs.x + bs.w / 2, bs.y + bs.h / 2, 22, { c: '#ffd83d', spd: 4.5, r: 5, life: 34 });
+        if (bs.hp <= 0) { bs.state = 'dying'; bs.vy = -4; Sfx.die(); }
+        else {
+          bs.state = 'stunned'; bs.vy = 2;
+          W.enemies.push({ type: 'fly', x: bs.x + 30, y: bs.y + 20, w: 32, h: 26,
+                           hx: bs.x + 30, hy: bs.y + 20, t: Math.random() * 6, dir: 1, dead: 0 });
+        }
+      } else if (!onHead && p.invuln <= 0 && bs.hurt <= 0) {
+        hurt(false);
       }
     }
 
@@ -665,6 +833,7 @@ var Game = (function () {
     drawPlanks();
     drawWater();
     drawDecorFront();
+    drawCrumbles();
     drawSprings();
     drawCheckpoints();
     drawMovers();
@@ -672,10 +841,14 @@ var Game = (function () {
     drawCoins();
     drawKey();
     drawEnemies();
+    drawBoss();
     if (!W.menu) { drawHints(); drawPlayer(); }
+    drawWind();
     drawParticles();
 
     ctx.restore();
+
+    if (W.boss && !W.menu) drawBossBar();
 
     /* --- foreground flakes / leaves --- */
     ctx.fillStyle = T.flake;
@@ -905,6 +1078,164 @@ var Game = (function () {
         ell(ctx, d.x - 3 * s, d.y - 9 * s, 4 * s, 2.5 * s); ctx.fill();
       }
     }
+  }
+
+  function drawCrumbles() {
+    var T = W.theme;
+    for (var i = 0; i < W.crumbles.length; i++) {
+      var c = W.crumbles[i];
+      if (c.state === 2) {                       // gone, but it comes back
+        ctx.save();
+        ctx.globalAlpha = 0.16 + 0.1 * Math.sin(W.timer * 0.1 + c.seed);
+        ctx.strokeStyle = T.plankTop; ctx.lineWidth = 2.5;
+        ctx.setLineDash([7, 7]);
+        rr(ctx, c.x + 3, c.y + 1, TILE - 6, 15, 6); ctx.stroke();
+        ctx.setLineDash([]); ctx.restore();
+        continue;
+      }
+      var sh = c.state === 1 ? Math.sin(c.t * 1.6) * (0.8 + c.t * 0.1) : 0;
+      var warn = c.state === 1 ? Math.min(1, c.t / CRACK_TIME) : 0;
+      ctx.save(); ctx.translate(sh, 0);
+      ctx.fillStyle = 'rgba(0,0,0,.15)';
+      rr(ctx, c.x + 3, c.y + 8, TILE, 16, 7); ctx.fill();
+      // its own clay palette, the same in every theme: this must never look safe
+      ctx.fillStyle = warn ? 'rgb(' + Math.round(150 + warn * 80) + ',' +
+                             Math.round(118 - warn * 40) + ',90)' : '#96785c';
+      rr(ctx, c.x, c.y, TILE, 18, 7); ctx.fill();
+      ctx.fillStyle = warn ? 'rgb(' + Math.round(196 + warn * 50) + ',' +
+                             Math.round(160 - warn * 50) + ',120)' : '#c4a683';
+      rr(ctx, c.x, c.y - 2, TILE, 10, 5); ctx.fill();
+      ctx.strokeStyle = 'rgba(52,34,20,' + (0.55 + warn * 0.4) + ')';
+      ctx.lineWidth = 1.8 + warn * 1.6;
+      ctx.beginPath();
+      ctx.moveTo(c.x + 11, c.y - 1); ctx.lineTo(c.x + 18, c.y + 8); ctx.lineTo(c.x + 13, c.y + 18);
+      ctx.moveTo(c.x + 33, c.y - 1); ctx.lineTo(c.x + 27, c.y + 7); ctx.lineTo(c.x + 36, c.y + 18);
+      ctx.moveTo(c.x + 18, c.y + 8); ctx.lineTo(c.x + 27, c.y + 7);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawWind() {
+    for (var i = 0; i < W.winds.length; i++) {
+      var wd = W.winds[i];
+      var gr = ctx.createLinearGradient(0, wd.y + wd.h, 0, wd.y);
+      gr.addColorStop(0, 'rgba(255,255,255,.22)');
+      gr.addColorStop(1, 'rgba(255,255,255,.02)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(wd.x + 2, wd.y, wd.w - 4, wd.h);
+      ctx.strokeStyle = 'rgba(255,255,255,.6)';
+      ctx.lineWidth = 2.6;
+      var span = wd.h + 40;
+      for (var k = 0; k < 4; k++) {
+        var cy2 = wd.y + wd.h - ((W.timer * 2.2 + k * span / 4 + wd.ph * 30) % span);
+        if (cy2 < wd.y - 6 || cy2 > wd.y + wd.h) continue;
+        var cx2 = wd.x + wd.w / 2 + Math.sin((cy2 + wd.ph * 50) * 0.05) * (wd.w * 0.2);
+        var fade = Math.min(1, (wd.y + wd.h - cy2) / 70) * Math.min(1, (cy2 - wd.y + 40) / 70);
+        ctx.globalAlpha = Math.max(0, fade) * 0.85;
+        ctx.beginPath();
+        ctx.moveTo(cx2 - 9, cy2 + 8); ctx.lineTo(cx2, cy2); ctx.lineTo(cx2 + 9, cy2 + 8);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawBoss() {
+    var b = W.boss;
+    if (!b || (b.state === 'dying' && b.dead > 110)) return;
+    var cx0 = b.x + b.w / 2, cy0 = b.y + b.h / 2;
+    var flap = Math.sin(W.timer * 0.85) * 0.5 + 0.5;
+
+    ctx.fillStyle = 'rgba(0,0,0,.15)';
+    ell(ctx, cx0, b.floorY - 5, 42, 8); ctx.fill();
+
+    ctx.save();
+    if (b.state === 'dying') {
+      ctx.globalAlpha = Math.max(0, 1 - b.dead / 110);
+      ctx.translate(cx0, cy0); ctx.rotate(b.dead * 0.09); ctx.translate(-cx0, -cy0);
+    }
+    if (b.hurt > 0 && Math.floor(b.hurt / 4) % 2 === 0) ctx.globalAlpha *= 0.45;
+
+    ctx.fillStyle = 'rgba(255,255,255,.5)';
+    [[-0.55, -6], [-1.15, 2]].forEach(function (wg) {     // two pairs, fanned upward
+      ctx.save(); ctx.translate(cx0 + wg[1], cy0 - 16);
+      ctx.rotate(wg[0] - flap * 0.35); ell(ctx, 0, -30, 12, 31); ctx.fill(); ctx.restore();
+      ctx.save(); ctx.translate(cx0 + wg[1], cy0 - 16);
+      ctx.rotate(-wg[0] + flap * 0.35); ell(ctx, 0, -30, 12, 31); ctx.fill(); ctx.restore();
+    });
+
+    ctx.fillStyle = '#5a4a3a';
+    ctx.beginPath();
+    ctx.moveTo(cx0 + b.dir * 34, cy0 + 4);
+    ctx.lineTo(cx0 + b.dir * 56, cy0 + 10);
+    ctx.lineTo(cx0 + b.dir * 34, cy0 + 17);
+    ctx.closePath(); ctx.fill();
+
+    var bgr = ctx.createLinearGradient(0, cy0 - 30, 0, cy0 + 30);
+    bgr.addColorStop(0, '#ffe07a'); bgr.addColorStop(1, '#e8990f');
+    ctx.fillStyle = bgr;
+    ell(ctx, cx0, cy0, 38, 28); ctx.fill();
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(cx0, cy0, 38, 28, 0, 0, 6.29); ctx.clip();
+    ctx.fillStyle = '#433a56';
+    rr(ctx, cx0 + b.dir * 4,  cy0 - 32, 13, 64, 6); ctx.fill();
+    rr(ctx, cx0 + b.dir * 24, cy0 - 32, 13, 64, 6); ctx.fill();
+    ctx.restore();
+
+    var hx = cx0 - b.dir * 34;
+    ctx.fillStyle = '#433a56';
+    ctx.beginPath(); ctx.arc(hx, cy0 - 4, 22, 0, 6.29); ctx.fill();
+
+    var ky = cy0 - 24;                                   // crown
+    ctx.fillStyle = '#ffd83d';
+    ctx.beginPath();
+    ctx.moveTo(hx - 16, ky);     ctx.lineTo(hx - 16, ky - 15); ctx.lineTo(hx - 8, ky - 6);
+    ctx.lineTo(hx, ky - 18);     ctx.lineTo(hx + 8, ky - 6);   ctx.lineTo(hx + 16, ky - 15);
+    ctx.lineTo(hx + 16, ky);     ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ff5b8f';
+    ctx.beginPath(); ctx.arc(hx, ky - 11, 3.4, 0, 6.29); ctx.fill();
+
+    var angry = (b.state === 'aim' || b.state === 'dive');
+    [-9, 9].forEach(function (o) {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(hx + o, cy0 - 5, 7, 0, 6.29); ctx.fill();
+      ctx.fillStyle = angry ? '#e8384f' : '#26204a';
+      ctx.beginPath(); ctx.arc(hx + o - b.dir * 1.5, cy0 - 4, 3.6, 0, 6.29); ctx.fill();
+    });
+    if (angry) {
+      ctx.strokeStyle = '#26204a'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(hx - 17, cy0 - 16); ctx.lineTo(hx - 3, cy0 - 10);
+      ctx.moveTo(hx + 17, cy0 - 16); ctx.lineTo(hx + 3, cy0 - 10);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+  }
+
+  /* Drawn in screen space, not above her head — that is exactly where you land. */
+  function drawBossBar() {
+    var b = W.boss;
+    if (!b || (b.state === 'dying' && b.dead > 60)) return;
+    var cx = VIEW_W / 2, y = VIEW_H - 42;
+    ctx.save();
+    ctx.fillStyle = 'rgba(28,16,56,.5)';
+    rr(ctx, cx - 76, y - 21, 152, 44, 20); ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.font = '700 13px "Baloo 2", "Comic Sans MS", system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    ctx.fillText('QUEEN', cx, y - 5);
+    for (var i = 0; i < 3; i++) {
+      var px = cx - 24 + i * 24, py = y + 10;
+      ctx.fillStyle = i < b.hp ? '#ff5b6e' : 'rgba(255,255,255,.22)';
+      ctx.beginPath(); ctx.arc(px, py, 7.5, 0, 6.29); ctx.fill();
+      if (i < b.hp) {
+        ctx.fillStyle = 'rgba(255,255,255,.45)';
+        ctx.beginPath(); ctx.arc(px - 2.2, py - 2.6, 2.5, 0, 6.29); ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   function drawSprings() {
@@ -1262,8 +1593,13 @@ var Game = (function () {
 
     /* ---------- arms ---------- */
     ctx.fillStyle = ORANGE_D;
-    ell(ctx, -11.5 - walk * 2, -13 - bob, 4.2, 5.6); ctx.fill();
-    ell(ctx,  11.5 + walk * 2, -13 - bob, 4.2, 5.6); ctx.fill();
+    if (p.gliding) {                       // spread wide, holding the leaf
+      ell(ctx, -15, -20, 6.5, 3.6); ctx.fill();
+      ell(ctx,  15, -20, 6.5, 3.6); ctx.fill();
+    } else {
+      ell(ctx, -11.5 - walk * 2, -13 - bob, 4.2, 5.6); ctx.fill();
+      ell(ctx,  11.5 + walk * 2, -13 - bob, 4.2, 5.6); ctx.fill();
+    }
 
     /* ---------- head ---------- */
     var hy = -25 - bob;
@@ -1325,6 +1661,16 @@ var Game = (function () {
     ctx.fillStyle = 'rgba(255,130,165,.42)';            // cheeks
     ell(ctx, -9.5, hy + 4, 3.6, 2.4); ctx.fill();
     ell(ctx,  9.5, hy + 4, 3.6, 2.4); ctx.fill();
+
+    if (p.gliding) {                       // the leaf itself
+      var lw = Math.sin(W.timer * 0.18) * 0.16;
+      ctx.save(); ctx.translate(0, -47 - bob); ctx.rotate(lw);
+      ctx.fillStyle = '#5fc45a';
+      ctx.beginPath(); ctx.ellipse(0, 0, 21, 8, 0, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = '#3d9a3a'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(-19, 0); ctx.lineTo(19, 0); ctx.stroke();
+      ctx.restore();
+    }
 
     ctx.restore();
 
@@ -1503,10 +1849,11 @@ var Game = (function () {
       if (rafId == null && !suspended) rafId = requestAnimationFrame(loop);
     },
 
-    start: function (index, cbs) {
+    start: function (index, cbs, opts) {
       if (!ctx) setup();
       hooks.complete = cbs.complete; hooks.gameover = cbs.gameover; hooks.hud = cbs.hud;
       W = buildLevel(index);
+      W.glide = !!(opts && opts.glide) || index >= 10;
       W.camX = clampCamX(W.p.x - VIEW_W / 2);
       W.camY = clampCamY(W.p.y - VIEW_H / 2);
       keys.left = keys.right = keys.jump = false; jumpEdge = false;
