@@ -275,7 +275,11 @@ var Game = (function () {
     w.p = {
       x: w.spawn.x, y: w.spawn.y, w: 30, h: 38, vx: 0, vy: 0,
       onGround: true, coyote: COYOTE, buf: 0, face: 1, anim: 0,
-      sq: 1, invuln: 0, blink: 0, rider: null, jumpHeld: false, canCut: true, dead: 0, winT: 0
+      sq: 1, invuln: 0, blink: 0, blinkIn: 70, rider: null, jumpHeld: false, canCut: true,
+      dead: 0, winT: 0,
+      /* purely cosmetic: lean, follow-through and pose blending, never physics */
+      an: { lean:0, tail:0, ear:0, look:0, lookY:0, mouth:0, idle:0, flip:0, face:1,
+            legS:7, legL:0, armX:11.5, armY:-13, breath:0, flour:0, kind:0, dust:0 }
     };
     w.checkpoint = { x: w.spawn.x, y: w.spawn.y };
     return w;
@@ -413,6 +417,73 @@ var Game = (function () {
     }
   }
 
+  /* --------------------- character animation ------------------
+     Everything here is drawing state. It reads the physics and never
+     writes to it, so the feel of the controls is untouched. */
+  function updatePose() {
+    var p = W.p, a = p.an;
+    var air = !p.onGround;
+    var rising  = air && p.vy < -1.2;
+    var falling = air && p.vy > 1.2 && !p.gliding;
+    var running = p.onGround && Math.abs(p.vx) > 0.3;
+
+    // body leans into the run, straightens in the air
+    var lean = clamp(p.vx * (p.onGround ? 0.030 : 0.016), -0.2, 0.2);
+    a.lean += (lean - a.lean) * 0.18;
+
+    // ears and tail drag behind the body
+    a.ear  += ((-p.vx * 0.045 - p.vy * 0.013) - a.ear)  * 0.16;
+    a.tail += ((-p.vx * 0.055 + p.vy * 0.020) - a.tail) * 0.12;
+
+    // eyes lead the movement and glance down on a long fall
+    a.look  += ((p.face * 1.5 + p.vx * 0.14) - a.look)  * 0.2;
+    a.lookY += (clamp(p.vy * 0.18, -1.8, 2.4) - a.lookY) * 0.2;
+
+    // an open mouth on the way up, a small one while gliding
+    var mouth = rising ? 1 : (p.gliding ? 0.55 : 0);
+    a.mouth += (mouth - a.mouth) * 0.2;
+
+    // a quick horizontal pinch when he turns around
+    if (p.face !== a.face) { a.flip = 1; a.face = p.face; }
+    a.flip *= 0.8;
+
+    // limb pose targets, blended so poses never snap
+    var legS = 7, legL = 0, armX = 11.5, armY = -13;
+    if (p.gliding)     { legS = 5;  legL = 3;  armX = 15;   armY = -20; }
+    else if (rising)   { legS = 5;  legL = 5;  armX = 8.5;  armY = -23; }
+    else if (falling)  { legS = 11; legL = -2; armX = 15.5; armY = -25; }
+    a.legS += (legS - a.legS) * 0.25;
+    a.legL += (legL - a.legL) * 0.25;
+    a.armX += (armX - a.armX) * 0.25;
+    a.armY += (armY - a.armY) * 0.25;
+
+    // standing still: breathing, then the odd twitch so he never looks frozen
+    if (p.onGround && Math.abs(p.vx) < 0.15 && W.state === 'play') a.idle++;
+    else { a.idle = 0; a.flour = 0; }
+    a.breath += ((a.idle > 18 ? 1 : 0) - a.breath) * 0.1;
+    if (a.idle > 130 && a.flour <= 0 && Math.random() < 0.011) {
+      a.flour = 50; a.kind = (Math.random() * 3) | 0;
+    }
+    if (a.flour > 0) a.flour--;
+
+    // blinks at irregular intervals, sometimes twice
+    if (p.blink > 0) p.blink--;
+    else if (--p.blinkIn <= 0) {
+      p.blink = 7;
+      p.blinkIn = 70 + ((Math.random() * 190) | 0) + (Math.random() < 0.22 ? -55 : 0);
+    }
+
+    // scuffs of dust at full tilt, and a bigger puff when he skids to turn
+    if (running && Math.abs(p.vx) > 4.2 && ++a.dust % 7 === 0) {
+      burst(p.x + p.w / 2 - p.face * 12, p.y + p.h - 2, 1,
+            { c: 'rgba(255,255,255,.6)', spd: 1.1, r: 3.2, life: 17, g: 0.03 });
+    }
+    if (p.onGround && p.vx * p.face < -1.6 && W.timer % 4 === 0) {
+      burst(p.x + p.w / 2, p.y + p.h - 2, 2,
+            { c: 'rgba(255,255,255,.75)', spd: 1.7, r: 3.8, life: 22, g: 0.05 });
+    }
+  }
+
   /* ------------------------ the Queen ------------------------ */
   function updateBoss() {
     var b = W.boss, p = W.p;
@@ -527,6 +598,7 @@ var Game = (function () {
       moveX(p, p.vx);
       p.vy = Math.min(p.vy + GRAVITY, MAX_FALL);
       p.onGround = false; moveY(p, p.vy);
+      updatePose();
       if (p.winT % 22 === 0) burst(W.goal.cx + 12, W.goal.by - 60, 8,
         { c: '#ffd83d', spd: 2.5, r: 4, life: 40, g: 0.02, shape: 'star' });
       updParticles();
@@ -603,9 +675,10 @@ var Game = (function () {
     } else if (wasGround && p.vy >= 0) { p.coyote = p.coyote || COYOTE; }
 
     p.sq = Math.abs(p.sq - 1) < 0.004 ? 1 : lerp(p.sq, 1, 0.18);
-    if (Math.abs(p.vx) > 0.4 && p.onGround) p.anim += 0.22; else p.anim = lerp(p.anim, 0, 0.2);
+    if (Math.abs(p.vx) > 0.4 && p.onGround) p.anim += 0.055 + Math.abs(p.vx) * 0.035;
+    else p.anim = lerp(p.anim, 0, 0.2);
     if (p.invuln > 0) p.invuln--;
-    p.blink = (p.blink + 1) % 200;
+    updatePose();
 
     /* ---- falling out of the level ---- */
     if (p.y > W.pxH + 120) { hurt(true); }
@@ -1547,124 +1620,165 @@ var Game = (function () {
   }
 
   function drawPlayer() {
-    var p = W.p;
+    var p = W.p, a = p.an;
     if (p.invuln > 0 && Math.floor(p.invuln / 5) % 2 === 0 && W.state === 'play') return;
 
     var d    = p.face;
-    var sy   = p.sq, sx = 2 - p.sq;
-    var walk = Math.sin(p.anim) * (p.onGround ? 1 : 0);
-    var bob  = p.onGround ? Math.abs(Math.sin(p.anim)) * 1.8 : 0;
+    var sy   = p.sq;
+    var sx   = (2 - p.sq) * (1 - a.flip * 0.26);        // pinches when he turns
+    var ph   = p.anim;
+    var run  = p.onGround ? Math.min(1, Math.abs(p.vx) / 4.6) : 0;
+    var swing= Math.sin(ph) * run;
+    var bob  = Math.abs(Math.sin(ph)) * 2.2 * run;
+    var puff = a.breath * Math.sin(W.timer * 0.05) * 0.9;   // breathing while idle
     var spin = W.state === 'dead' ? p.dead * 0.12 : 0;
     var ORANGE = '#ffa64d', ORANGE_D = '#ef8228', CREAM = '#fff4e6', INK = '#3b2b4f';
+
+    /* one-shot idle flourishes: an ear twitch, a tail flick, a look around */
+    var twitch = (a.flour > 0 && a.kind === 0)
+      ? Math.sin((50 - a.flour) * 0.95) * Math.max(0, (a.flour - 22) / 28) * 0.55 : 0;
+    var flick  = (a.flour > 0 && a.kind === 1)
+      ? Math.sin((50 - a.flour) * 0.55) * Math.max(0, (a.flour - 14) / 36) * 0.8 : 0;
+    var peek   = (a.flour > 0 && a.kind === 2)
+      ? Math.sin((50 - a.flour) * 0.16) * 2.4 : 0;
 
     ctx.save();
     ctx.translate(p.x + p.w / 2, p.y + p.h);
     if (spin) ctx.rotate(spin);
+
+    /* the shadow stays flat on the ground and shrinks as he lifts off */
+    if (!spin) {
+      ctx.fillStyle = 'rgba(0,0,0,.18)';
+      ell(ctx, 0, 1, 16 - bob * 0.7, 4.5); ctx.fill();
+    }
     ctx.scale(sx, sy);
 
-    if (!spin) { ctx.fillStyle = 'rgba(0,0,0,.18)'; ell(ctx, 0, 1, 16, 4.5); ctx.fill(); }
+    /* ---------- speed lines at full tilt ---------- */
+    if (run > 0.86) {
+      ctx.strokeStyle = 'rgba(255,255,255,' + ((run - 0.86) * 2.6).toFixed(2) + ')';
+      ctx.lineWidth = 2.4;
+      [-13, -24].forEach(function (yy, i) {
+        ctx.beginPath();
+        ctx.moveTo(-d * (20 + i * 5), yy);
+        ctx.lineTo(-d * (34 + i * 7 + Math.sin(W.timer * 0.5 + i) * 3), yy);
+        ctx.stroke();
+      });
+    }
 
-    /* ---------- tail ---------- */
+    /* ---------- tail: drags behind, wags, flicks ---------- */
     ctx.save();
-    ctx.translate(-d * 8, -12 - bob * 0.4);
-    ctx.rotate(d * (0.30 + Math.sin(W.timer * 0.09) * 0.16));
+    ctx.translate(-d * 8, -12 - bob * 0.4 - puff * 0.3);
+    ctx.rotate(d * (0.30 + Math.sin(W.timer * 0.09) * 0.10 + flick)
+               + a.tail * d + swing * 0.12 * d);
     ctx.fillStyle = ORANGE_D;
     ctx.beginPath();
     ctx.moveTo(0, -7);
     ctx.quadraticCurveTo(-d * 15, -15, -d * 27, -7);
-    ctx.quadraticCurveTo(-d * 15, 4, 0, 6);
+    ctx.quadraticCurveTo(-d * 15,   4,  0,  6);
     ctx.closePath(); ctx.fill();
     ctx.fillStyle = CREAM;
     ell(ctx, -d * 24, -5, 7.5, 6); ctx.fill();
     ctx.restore();
 
-    /* ---------- paws ---------- */
+    /* ---------- paws: swing and lift through the run cycle ---------- */
+    var liftA = Math.max(0, Math.sin(ph)) * 3.4 * run;
+    var liftB = Math.max(0, Math.sin(ph + Math.PI)) * 3.4 * run;
     ctx.fillStyle = ORANGE_D;
-    ell(ctx, -7 + walk * 4.5, -3.5, 6.5, 4); ctx.fill();
-    ell(ctx,  7 - walk * 4.5, -3.5, 6.5, 4); ctx.fill();
+    ell(ctx, -a.legS + swing * 5.5, -3.5 - a.legL - liftA, 6.5, 4); ctx.fill();
+    ell(ctx,  a.legS - swing * 5.5, -3.5 - a.legL - liftB, 6.5, 4); ctx.fill();
 
-    /* ---------- body ---------- */
+    /* ---------- everything above the hips leans into the movement ---------- */
+    ctx.save();
+    ctx.translate(0, -11); ctx.rotate(a.lean); ctx.translate(0, 11);
+
     var bgr = ctx.createLinearGradient(0, -22, 0, -2);
     bgr.addColorStop(0, ORANGE); bgr.addColorStop(1, ORANGE_D);
     ctx.fillStyle = bgr;
-    ell(ctx, 0, -11 - bob, 13, 10.5); ctx.fill();
+    ell(ctx, 0, -11 - bob, 13 + puff * 0.4, 10.5 + puff); ctx.fill();
     ctx.fillStyle = CREAM;
-    ell(ctx, 0, -8.5 - bob, 7.5, 7); ctx.fill();
+    ell(ctx, 0, -8.5 - bob, 7.5, 7 + puff * 0.6); ctx.fill();
 
-    /* ---------- arms ---------- */
+    /* arms: opposite to the legs on the ground, blended poses in the air */
     ctx.fillStyle = ORANGE_D;
-    if (p.gliding) {                       // spread wide, holding the leaf
-      ell(ctx, -15, -20, 6.5, 3.6); ctx.fill();
-      ell(ctx,  15, -20, 6.5, 3.6); ctx.fill();
+    if (p.gliding) {
+      ell(ctx, -a.armX, a.armY, 6.5, 3.6); ctx.fill();
+      ell(ctx,  a.armX, a.armY, 6.5, 3.6); ctx.fill();
     } else {
-      ell(ctx, -11.5 - walk * 2, -13 - bob, 4.2, 5.6); ctx.fill();
-      ell(ctx,  11.5 + walk * 2, -13 - bob, 4.2, 5.6); ctx.fill();
+      ell(ctx, -a.armX - swing * 2.5, a.armY - bob - liftB * 0.3, 4.2, 5.6); ctx.fill();
+      ell(ctx,  a.armX + swing * 2.5, a.armY - bob - liftA * 0.3, 4.2, 5.6); ctx.fill();
     }
 
-    /* ---------- head ---------- */
-    var hy = -25 - bob;
-    for (var k = -1; k <= 1; k += 2) {                 // ears
+    /* ---------- head, with the ears trailing a beat behind ---------- */
+    var hy = -25 - bob * 1.15 - puff * 0.5;
+    for (var k = -1; k <= 1; k += 2) {
+      ctx.save();
+      ctx.translate(k * 4, hy - 7);
+      ctx.rotate(a.ear * d + k * twitch + swing * 0.05);
       ctx.fillStyle = ORANGE_D;
       ctx.beginPath();
-      ctx.moveTo(k * 3.5, hy - 7);
-      ctx.lineTo(k * 12,  hy - 19);
-      ctx.lineTo(k * 12.5, hy - 4);
+      ctx.moveTo(-k * 0.5, 0); ctx.lineTo(k * 8, -12); ctx.lineTo(k * 8.5, 3);
       ctx.closePath(); ctx.fill();
       ctx.fillStyle = '#ffb9cb';
       ctx.beginPath();
-      ctx.moveTo(k * 6, hy - 8);
-      ctx.lineTo(k * 10.5, hy - 15.5);
-      ctx.lineTo(k * 10.5, hy - 6);
+      ctx.moveTo(k * 2, -1); ctx.lineTo(k * 6.5, -8.5); ctx.lineTo(k * 6.5, 1);
       ctx.closePath(); ctx.fill();
+      ctx.restore();
     }
     var hgr = ctx.createLinearGradient(0, hy - 12, 0, hy + 11);
     hgr.addColorStop(0, '#ffb85f'); hgr.addColorStop(1, ORANGE);
     ctx.fillStyle = hgr;
     ell(ctx, 0, hy, 12.5, 11); ctx.fill();
-    ctx.fillStyle = CREAM;                                // snout
+    ctx.fillStyle = CREAM;
     ell(ctx, d * 3.5, hy + 4, 9, 6); ctx.fill();
 
     /* ---------- face ---------- */
-    var blinking = p.blink > 192 || W.state === 'dead';
     var ey = hy - 2.5;
-    if (blinking) {
+    if (p.blink > 0 || W.state === 'dead') {
       ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.lineCap = 'round';
       [-5.5, 5.5].forEach(function (ex) {
-        ctx.beginPath(); ctx.moveTo(ex - 3, ey); ctx.lineTo(ex + 3, ey); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ex - 3, ey); ctx.quadraticCurveTo(ex, ey + 1.6, ex + 3, ey); ctx.stroke();
       });
     } else {
       [-5.5, 5.5].forEach(function (ex) {
         ctx.fillStyle = '#fff';
         ctx.beginPath(); ctx.arc(ex, ey, 4.6, 0, 6.29); ctx.fill();
         ctx.fillStyle = INK;
-        ctx.beginPath(); ctx.arc(ex + d * 1.3, ey + 0.5, 2.7, 0, 6.29); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(ex + clamp(a.look + peek, -2.2, 2.2), ey + 0.5 + a.lookY, 2.7, 0, 6.29);
+        ctx.fill();
         ctx.fillStyle = '#fff';
         ctx.beginPath(); ctx.arc(ex + d * 0.5, ey - 1.4, 1.1, 0, 6.29); ctx.fill();
       });
     }
-    ctx.fillStyle = INK;                                // nose
+    ctx.fillStyle = INK;                                  // nose
     ctx.beginPath();
-    ctx.moveTo(d * 6.5, hy + 1.2);
-    ctx.lineTo(d * 12.5, hy + 1.2);
+    ctx.moveTo(d * 6.5, hy + 1.2); ctx.lineTo(d * 12.5, hy + 1.2);
     ctx.quadraticCurveTo(d * 9.5, hy + 7, d * 6.5, hy + 1.2);
     ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
-    ctx.beginPath();                                    // mouth
-    ctx.moveTo(d * 9.5, hy + 5.5);
-    ctx.quadraticCurveTo(d * 6, hy + 8.5, d * 3, hy + 6);
-    ctx.stroke();
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();                                    // whiskers
-    ctx.moveTo(d * 12, hy + 3); ctx.lineTo(d * 19, hy + 1.5);
-    ctx.moveTo(d * 12, hy + 6); ctx.lineTo(d * 19, hy + 6.5);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,130,165,.42)';            // cheeks
-    ell(ctx, -9.5, hy + 4, 3.6, 2.4); ctx.fill();
-    ell(ctx,  9.5, hy + 4, 3.6, 2.4); ctx.fill();
 
-    if (p.gliding) {                       // the leaf itself
-      var lw = Math.sin(W.timer * 0.18) * 0.16;
-      ctx.save(); ctx.translate(0, -47 - bob); ctx.rotate(lw);
+    if (a.mouth > 0.12) {                                 // an open "wheee" mouth
+      ctx.fillStyle = INK;
+      ell(ctx, d * 6, hy + 8, 2.6 + a.mouth * 1.6, 1.6 + a.mouth * 2.6); ctx.fill();
+    } else {
+      ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(d * 9.5, hy + 5.5);
+      ctx.quadraticCurveTo(d * 6, hy + 8.5, d * 3, hy + 6);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.2;           // whiskers
+    ctx.beginPath();
+    ctx.moveTo(d * 12, hy + 3); ctx.lineTo(d * 19, hy + 1.5 - a.ear * 6);
+    ctx.moveTo(d * 12, hy + 6); ctx.lineTo(d * 19, hy + 6.5 - a.ear * 4);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,130,165,.42)';              // cheeks
+    ell(ctx, -9.5, hy + 4, 3.6 + run * 0.8, 2.4 + run * 0.5); ctx.fill();
+    ell(ctx,  9.5, hy + 4, 3.6 + run * 0.8, 2.4 + run * 0.5); ctx.fill();
+
+    if (p.gliding) {                                      // the leaf
+      var lw = Math.sin(W.timer * 0.18) * 0.16 + a.lean * 0.5;
+      ctx.save(); ctx.translate(0, hy - 22); ctx.rotate(lw);
       ctx.fillStyle = '#5fc45a';
       ctx.beginPath(); ctx.ellipse(0, 0, 21, 8, 0, 0, 6.29); ctx.fill();
       ctx.strokeStyle = '#3d9a3a'; ctx.lineWidth = 1.6;
@@ -1672,7 +1786,8 @@ var Game = (function () {
       ctx.restore();
     }
 
-    ctx.restore();
+    ctx.restore();   // end of the leaning upper body
+    ctx.restore();   // end of the character transform
 
     /* ---------- the key being carried ---------- */
     if (W.hasKey) {
